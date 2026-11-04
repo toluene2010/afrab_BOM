@@ -1,10 +1,4 @@
-Here is the **complete, updated `bom_tool.py`**. 
 
-I have integrated the new **Smart Parser** directly into the file. This version handles the exact format Google Lens gives you (where every cell is on a new line), fixes OCR typos like `REO40`, and correctly guesses if a number is in Kg or gm.
-
-Replace your entire file with this:
-
-```python
 import streamlit as st
 import pandas as pd
 import os, json, re
