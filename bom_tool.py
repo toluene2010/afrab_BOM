@@ -38,13 +38,12 @@ def _local_save(d):
         os.fsync(f.fileno())
     os.replace(tmp, DATA_FILE)
 
+# ---------- Gist storage ----------
 def _gist_config():
     try:
-        # Force reading only from Streamlit Secrets
         gh = st.secrets["github"]
         tok = gh["token"]
         gid = gh["gist_id"]
-        # Make sure it's a valid classic token
         if tok and tok.startswith("ghp_") and gid:
             return tok, gid
     except Exception:
@@ -194,73 +193,73 @@ with tabs[0]:
     raw = st.text_area(
         "1. Paste raw Google Lens text here",
         height=200,
-        placeholder="Paste the messy text here. The app will clean it up.",
+        placeholder="RA132\nIRON (III) HYDROXIDE\n100\nREO40\nPROPYLENE GLYCOL\n180\n...",
         key="paste_box",
     )
 
     if st.button("⚙️ Auto-Extract Data"):
-        # Split into lines and remove empty ones
         lines = [l.strip() for l in raw.splitlines() if l.strip()]
         
-        # Clean up common OCR errors (like REO40 instead of RE040)
+        # Clean up common OCR errors
         cleaned_lines = []
         for line in lines:
-            if line.startswith("REO"):
-                line = "RE0" + line[3:]
+            line = line.replace("REOS", "RE05").replace("REO", "RE0")
             cleaned_lines.append(line)
             
-        parsed_lines = []
-        i = 0
-        while i < len(cleaned_lines):
-            line = cleaned_lines[i]
-            
-            # Check if the line looks like a material code (e.g., RA132, RE040, REDSS)
-            if re.match(r'^R[A-Z]\d{3,4}$', line) or line == "REDSS" or (line.startswith("RE") and len(line) <= 6):
-                code = line
-                name = ""
-                kg = "0"
-                gm = "0"
-                
-                # 1. Grab the Name (it should be the very next line)
-                if i + 1 < len(cleaned_lines):
-                    name = cleaned_lines[i+1]
-                    i += 2
-                else:
-                    i += 1
-                    continue
-                    
-                # 2. Grab the Numbers (Kg and gm)
-                numbers = []
-                while i < len(cleaned_lines):
-                    nxt = cleaned_lines[i]
-                    # Stop if we hit another code
-                    if re.match(r'^R[A-Z]\d{3,4}$', nxt) or nxt == "REDSS" or (nxt.startswith("RE") and len(nxt) <= 6):
-                        break
-                    # Stop if we hit footer junk
-                    if any(x in nxt.upper() for x in ["PRODUCTION", "STORE KEEPER", "ORIGINAL", "SIGNATURE", "DATE:", "WEIGHT CHECK"]):
-                        break
-                        
-                    # If it's just a number, save it
-                    if re.match(r'^[\d\.]+$', nxt):
-                        numbers.append(nxt)
-                    i += 1
-                    
-                # 3. Assign Kg and gm based on how many numbers we found
-                if len(numbers) == 1:
-                    # If there's a decimal (like 225.3), it's gm. Otherwise it's kg.
-                    if "." in numbers[0]:
-                        gm = numbers[0]
-                    else:
-                        kg = numbers[0]
-                elif len(numbers) >= 2:
-                    kg = numbers[0]
-                    gm = numbers[1]
-                    
-                parsed_lines.append(f"{code} | {name} | {kg}, {gm}")
-            else:
-                i += 1
+        parsed_items = []
+        current_code = None
+        current_data = []
+        
+        stop_words = ["PRODUCTION", "MANAGER", "STORE KEEPER", "ORIGINALCO", "SIGNATURE", "DATE"]
 
-        st.session_state["parsed_text"] = "\n".join(parsed_lines)
+        for line in cleaned_lines:
+            # Stop processing if we hit the footer
+            if any(sw in line.upper() for sw in stop_words):
+                break
+                
+            # Check if line is a material code (e.g., RA132, RE040)
+            if re.match(r'^R[A-Z]{2}\d{3,4}$', line):
+                if current_code:
+                    parsed_items.append((current_code, current_data))
+                current_code = line
+                current_data = []
+            elif current_code:
+                current_data.append(line)
+                
+        # Append the last item
+        if current_code:
+            parsed_items.append((current_code, current_data))
+
+        # Format the extracted data
+        final_output = []
+        for code, data_block in parsed_items:
+            name_parts = []
+            numbers = []
+            
+            for item in data_block:
+                # If item is purely a number (with or without decimal)
+                if re.match(r'^\d+(\.\d+)?$', item):
+                    numbers.append(item)
+                else:
+                    name_parts.append(item)
+                    
+            name = " ".join(name_parts)
+            kg = "0"
+            gm = "0"
+            
+            if len(numbers) == 1:
+                # If there's a decimal (like 225.3), it's gm. Otherwise it's kg.
+                if "." in numbers[0]:
+                    gm = numbers[0]
+                else:
+                    kg = numbers[0]
+            elif len(numbers) >= 2:
+                kg = numbers[0]
+                gm = numbers[1]
+                
+            final_output.append(f"{code} | {name} | {kg}, {gm}")
+
+        st.session_state["parsed_text"] = "\n".join(final_output)
         st.success("Data extracted! Review it below before saving.")
 
     # Show the parsed text for review
@@ -296,7 +295,7 @@ with tabs[0]:
                 "source": "paste",
             }
             save_data(data)
-            st.session_state["parsed_text"] = "" # clear after save
+            st.session_state["parsed_text"] = ""
             st.success(f"Saved {pcode} with {len(mats)} materials!")
             st.rerun()
 
