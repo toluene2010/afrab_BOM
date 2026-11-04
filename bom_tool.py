@@ -487,4 +487,3 @@ with tabs[5]:
         st.download_button("⬇️ Download Excel", out,
                            f"BOM_{datetime.now():%Y%m%d_%H%M}.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-```
