@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os, json, re
@@ -177,10 +178,7 @@ tabs = st.tabs([
 # ============ TAB 1: Smart Paste ============
 with tabs[0]:
     st.header("Add BOM from text")
-    st.caption(
-        "Take a photo with Google Lens, copy the raw text, and paste it below. "
-        "The app will automatically find the codes, names, and quantities."
-    )
+    st.caption("Take a photo with Google Lens, copy the raw text, and paste it below.")
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
@@ -193,73 +191,60 @@ with tabs[0]:
     raw = st.text_area(
         "1. Paste raw Google Lens text here",
         height=200,
-        placeholder="RA132\nIRON (III) HYDROXIDE\n100\nREO40\nPROPYLENE GLYCOL\n180\n...",
+        placeholder="Paste your messy text here...",
         key="paste_box",
     )
 
     if st.button("⚙️ Auto-Extract Data"):
         lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        parsed_lines = []
         
-        # Clean up common OCR errors
-        cleaned_lines = []
-        for line in lines:
-            line = line.replace("REOS", "RE05").replace("REO", "RE0")
-            cleaned_lines.append(line)
-            
-        parsed_items = []
         current_code = None
-        current_data = []
+        current_name_parts = []
+        current_numbers = []
         
-        stop_words = ["PRODUCTION", "MANAGER", "STORE KEEPER", "ORIGINALCO", "SIGNATURE", "DATE"]
-
-        for line in cleaned_lines:
-            # Stop processing if we hit the footer
+        stop_words = ["PRODUCTION", "MANAGER", "STORE KEEPER", "SIGNATURE", "DATE", "ORIGINAL"]
+        
+        for line in lines:
+            # Ignore footer text
             if any(sw in line.upper() for sw in stop_words):
-                break
+                continue
                 
             # Check if line is a material code (e.g., RA132, RE040)
             if re.match(r'^R[A-Z]{2}\d{3,4}$', line):
+                # Save the previous material block
                 if current_code:
-                    parsed_items.append((current_code, current_data))
+                    name = " ".join(current_name_parts)
+                    kg = current_numbers[0] if len(current_numbers) > 0 else "0"
+                    gm = current_numbers[1] if len(current_numbers) > 1 else "0"
+                    # If only 1 number and it has a decimal, it's grams
+                    if len(current_numbers) == 1 and "." in current_numbers[0]:
+                        gm = current_numbers[0]
+                        kg = "0"
+                    parsed_lines.append(f"{current_code} | {name} | {kg}, {gm}")
+                
+                # Start new material
                 current_code = line
-                current_data = []
+                current_name_parts = []
+                current_numbers = []
             elif current_code:
-                current_data.append(line)
-                
-        # Append the last item
-        if current_code:
-            parsed_items.append((current_code, current_data))
-
-        # Format the extracted data
-        final_output = []
-        for code, data_block in parsed_items:
-            name_parts = []
-            numbers = []
-            
-            for item in data_block:
-                # If item is purely a number (with or without decimal)
-                if re.match(r'^\d+(\.\d+)?$', item):
-                    numbers.append(item)
+                # Check if the line is a standalone number
+                if re.match(r'^\d+(\.\d+)?$', line):
+                    current_numbers.append(line)
                 else:
-                    name_parts.append(item)
+                    current_name_parts.append(line)
                     
-            name = " ".join(name_parts)
-            kg = "0"
-            gm = "0"
-            
-            if len(numbers) == 1:
-                # If there's a decimal (like 225.3), it's gm. Otherwise it's kg.
-                if "." in numbers[0]:
-                    gm = numbers[0]
-                else:
-                    kg = numbers[0]
-            elif len(numbers) >= 2:
-                kg = numbers[0]
-                gm = numbers[1]
-                
-            final_output.append(f"{code} | {name} | {kg}, {gm}")
+        # Save the last material block
+        if current_code:
+            name = " ".join(current_name_parts)
+            kg = current_numbers[0] if len(current_numbers) > 0 else "0"
+            gm = current_numbers[1] if len(current_numbers) > 1 else "0"
+            if len(current_numbers) == 1 and "." in current_numbers[0]:
+                gm = current_numbers[0]
+                kg = "0"
+            parsed_lines.append(f"{current_code} | {name} | {kg}, {gm}")
 
-        st.session_state["parsed_text"] = "\n".join(final_output)
+        st.session_state["parsed_text"] = "\n".join(parsed_lines)
         st.success("Data extracted! Review it below before saving.")
 
     # Show the parsed text for review
