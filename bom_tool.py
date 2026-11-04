@@ -27,21 +27,30 @@ data = load_data()
 
 # ---------- helpers ----------
 def kg_gm_to_float(kg, gm):
+    """kg + gm -> float kg. gm may be decimal (e.g. 0.2)."""
     return float(kg) + float(gm) / 1000.0
 
 def fmt_kg_gm(v):
+    """Format float kg -> '2 kg 500 gm', '0.2 gm', '2 kg 0.2 gm' etc."""
     if v is None:
         return ""
-    kg = int(v)
-    gm = round((v - kg) * 1000)
-    if gm == 1000:
+    total_gm = round(float(v) * 1000, 4)
+    kg = int(total_gm // 1000)
+    gm = round(total_gm - kg * 1000, 4)
+
+    if abs(gm - 1000) < 1e-6:
         kg += 1
-        gm = 0
+        gm = 0.0
+
+    def fmt_gm(g):
+        s = f"{g:.3f}".rstrip("0").rstrip(".")
+        return s if s else "0"
+
     parts = []
     if kg:
         parts.append(f"{kg} kg")
-    if gm or not kg:
-        parts.append(f"{gm} gm")
+    if gm > 0 or not kg:
+        parts.append(f"{fmt_gm(gm)} gm")
     return " ".join(parts)
 
 def parse_kg_gm_text(raw, mode="kg_gm"):
@@ -164,7 +173,6 @@ with tab_master:
 
     sub_single, sub_bulk = st.tabs(["➕ Add one", "📤 Bulk upload (CSV/Excel)"])
 
-    # --- Single add ---
     with sub_single:
         with st.form("add_material", clear_on_submit=True):
             c1, c2, c3 = st.columns([1, 2, 1])
@@ -185,7 +193,6 @@ with tab_master:
                     st.success(f"Added {mcode}")
                     st.rerun()
 
-    # --- Bulk upload ---
     with sub_bulk:
         st.markdown("#### Upload a CSV or Excel file")
         st.caption(
@@ -295,7 +302,6 @@ with tab_master:
             except Exception as e:
                 st.error(f"Could not read file: {e}")
 
-    # --- Master list view ---
     st.markdown("---")
     st.markdown(f"#### Registered materials ({len(data['materials'])})")
     if not data["materials"]:
@@ -333,7 +339,7 @@ with tab_build:
             )
 
         if "draft" not in st.session_state:
-            st.session_state.draft = [{"code": None, "kg": 0, "gm": 0}]
+            st.session_state.draft = [{"code": None, "kg": 0, "gm": 0.0}]
 
         st.markdown("#### Materials in this product")
 
@@ -377,12 +383,13 @@ with tab_build:
             with c3:
                 row["gm"] = st.number_input(
                     f"gm_{i}",
-                    min_value=0,
-                    max_value=999,
-                    step=1,
-                    value=int(row["gm"]),
+                    min_value=0.0,
+                    max_value=999.999,
+                    step=0.1,
+                    value=float(row["gm"]),
                     key=f"gm_{i}",
                     label_visibility="collapsed",
+                    format="%.3f",
                 )
             with c4:
                 if st.button("✖", key=f"rm_{i}") and len(st.session_state.draft) > 1:
@@ -392,7 +399,7 @@ with tab_build:
                 st.write("")
 
         if st.button("➕ Add another material"):
-            st.session_state.draft.append({"code": None, "kg": 0, "gm": 0})
+            st.session_state.draft.append({"code": None, "kg": 0, "gm": 0.0})
             st.rerun()
 
         st.markdown("#### Preview")
@@ -406,7 +413,7 @@ with tab_build:
                 "Name": data["materials"][r["code"]]["name"],
                 "kg": r["kg"],
                 "gm": r["gm"],
-                "Total kg": round(v, 3),
+                "Total kg": round(v, 5),
                 "Display": fmt_kg_gm(v),
             })
         if preview:
@@ -437,7 +444,7 @@ with tab_build:
                     "source": "manual",
                 }
                 save_data(data)
-                st.session_state.draft = [{"code": None, "kg": 0, "gm": 0}]
+                st.session_state.draft = [{"code": None, "kg": 0, "gm": 0.0}]
                 st.success(f"Saved {bp_code} with {len(mats)} materials")
                 st.rerun()
 
