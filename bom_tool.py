@@ -85,11 +85,29 @@ def convert_quantity(value, source_unit, target_unit):
     return value * factor
 
 
+def decimal_kg_to_parts(value):
+    """Split decimal kilograms into whole KG and equivalent GM."""
+    value = max(0.0, safe_float(value))
+    kg = math.floor(value + 1e-10)
+    gm = round((value - kg) * 1000, 6)
+    if gm >= 1000 - 1e-7:
+        kg += 1
+        gm = 0.0
+    return float(kg), gm
+
+
 def parse_mass_quantity(raw, mode="kg_gm"):
-    """Return (kg, gm) from text such as '2 kg 10.5 gm'."""
-    text = clean_text(raw).lower().replace(",", "").strip()
-    if not text:
+    """Return (kg, gm), accepting '2 kg 10.5 gm', '225.3' and '2 010'."""
+    original = clean_text(raw).lower().strip()
+    if not original:
         return None
+
+    # OCR sometimes turns '2 kg 10 gm' into '2 010'.
+    spaced = re.fullmatch(r"\s*(\d+)\s+(0?\d{1,3})\s*", original)
+    if spaced:
+        return float(spaced.group(1)), safe_float(spaced.group(2))
+
+    text = original.replace(",", "").strip()
 
     # Explicit combined quantity: 2 kg 10.5 gm
     match = re.fullmatch(
@@ -97,30 +115,30 @@ def parse_mass_quantity(raw, mode="kg_gm"):
         r"(\d+(?:\.\d+)?)\s*(?:gm|g))?\s*", text
     )
     if match:
-        return safe_float(match.group(1)), safe_float(match.group(2))
+        kg, extra_gm = decimal_kg_to_parts(match.group(1))
+        return kg, extra_gm + safe_float(match.group(2))
 
     # Grams only
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:gm|g)\s*", text)
     if match:
         return 0.0, safe_float(match.group(1))
 
-    # Kilograms only
+    # Kilograms only, including decimal values
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*kg\s*", text)
     if match:
-        return safe_float(match.group(1)), 0.0
+        return decimal_kg_to_parts(match.group(1))
 
-    # Legacy comma notation. In kg_gm mode, 2,500 means 2.5 kg,
-    # preserving the interpretation used by the earlier application.
-    raw_text = clean_text(raw).lower().replace(" ", "")
+    # Legacy comma notation: 2,500 means 2.5 kg in kg_gm mode.
+    raw_text = original.replace(" ", "")
     if re.fullmatch(r"\d+,\d{1,3}", raw_text):
         left, right = raw_text.split(",", 1)
         if mode == "kg_gm":
-            return safe_float(left) + safe_float("0." + right), 0.0
-        return safe_float(left + right), 0.0
+            return decimal_kg_to_parts(safe_float(left) + safe_float("0." + right))
+        return float(left + right), 0.0
 
-    # A plain decimal number is treated as kilograms.
+    # Plain decimal or integer quantity is interpreted as kilograms.
     if re.fullmatch(r"\d+(?:\.\d+)?", raw_text):
-        return safe_float(raw_text), 0.0
+        return decimal_kg_to_parts(raw_text)
 
     return None
 
@@ -447,41 +465,103 @@ STOP_WORDS = [
 ]
 
 
+def split_trailing_quantity(text):
+    """Separate a trailing quantity from a material name without splitting internal numbers."""
+    text = clean_text(text)
+    if not text:
+        return "", ""
+
+    # Explicit quantity suffix, e.g. 'MATERIAL NAME 225.3 kg'.
+    match = re.match(
+        r"^(?P<name>.+?)\s+(?P<qty>\d[\d,.]*(?:\s*kg(?:\s*\d[\d,.]*\s*(?:gm|g))?|\s*(?:gm|g|ml|l|pcs)))$",
+        text, flags=re.IGNORECASE
+    )
+    if match:
+        return match.group("name").strip(), match.group("qty").strip()
+
+    # OCR commonly drops decimal points/units and appends the figure:
+    # 'PROPYLENE GLYCOL 180', 'METHYL PARABEN 2 010', 'PROPYL PARABEN 225.3'.
+    match = re.match(r"^(?P<name>.+?)\s+(?P<qty>\d+\s+0?\d{1,3})$", text)
+    if match:
+        return match.group("name").strip(), match.group("qty").strip()
+
+    match = re.match(r"^(?P<name>.+?)\s+(?P<qty>\d+(?:[.,]\d+)?)$", text)
+    if match:
+        return match.group("name").strip(), match.group("qty").strip()
+
+    return text, ""
+
+
 def extract_ocr_materials(raw):
+    """Extract coded or uncoded rows and separate trailing quantities from names."""
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     extracted = []
-    current_code, current_name, current_numbers = None, [], []
+    current_code = ""
+    current_name_parts = []
+    current_numbers = []
+    uncoded_name_parts = []
+
+    def append_record(code, name_text, quantity_parts=None):
+        name, trailing_qty = split_trailing_quantity(name_text)
+        quantities = list(quantity_parts or [])
+        if trailing_qty:
+            quantities.append(trailing_qty)
+        extracted.append({
+            "Material Code": code,
+            "Material Name": name or "Unnamed material",
+            "Quantity Text": " ".join(quantities).strip() or "0"
+        })
 
     def save_current():
-        if current_code:
-            name = " ".join(current_name).strip() or "Unnamed material"
-            quantity = " ".join(current_numbers) if current_numbers else "0"
-            extracted.append({
-                "Material Code": current_code,
-                "Material Name": name,
-                "Quantity Text": quantity
-            })
+        nonlocal current_code, current_name_parts, current_numbers
+        if current_name_parts or current_code:
+            append_record(current_code, " ".join(current_name_parts), current_numbers)
+        current_code, current_name_parts, current_numbers = "", [], []
+
+    def save_uncoded():
+        nonlocal uncoded_name_parts
+        if uncoded_name_parts:
+            text = " ".join(uncoded_name_parts).strip()
+            name, qty = split_trailing_quantity(text)
+            # Only treat a line/group as a material row when it has a trailing figure.
+            if qty:
+                append_record("", name, [qty])
+            uncoded_name_parts = []
 
     for line in lines:
         if any(word in line.upper() for word in STOP_WORDS):
             continue
+
         first_part = line.split(maxsplit=1)[0].strip()
         if MATERIAL_CODE_PATTERN.fullmatch(first_part):
+            save_uncoded()
             save_current()
             current_code = clean_code(first_part)
-            current_name, current_numbers = [], []
             remaining = line[len(first_part):].strip()
             if remaining:
-                current_name.append(remaining)
+                current_name_parts.append(remaining)
             continue
-        if not current_code:
+
+        if current_code:
+            if NUMBER_PATTERN.fullmatch(line):
+                current_numbers.append(line)
+            else:
+                # A line ending in a quantity is kept with the material name;
+                # split_trailing_quantity separates it when the record is saved.
+                current_name_parts.append(line)
             continue
-        if NUMBER_PATTERN.fullmatch(line):
-            current_numbers.append(line)
+
+        # No material code was recognized: support Google Lens row-wise text.
+        # Each line ending in a quantity becomes an editable uncoded material row.
+        name, qty = split_trailing_quantity(line)
+        if qty:
+            save_uncoded()
+            append_record("", name, [qty])
         else:
-            current_name.append(line)
+            uncoded_name_parts.append(line)
 
     save_current()
+    save_uncoded()
     return extracted
 
 
@@ -491,6 +571,18 @@ def extraction_rows_from_records(records, database, mode):
         code = clean_code(record.get("Material Code"))
         name = clean_text(record.get("Material Name"))
         raw_qty = clean_text(record.get("Quantity Text"))
+
+        # If OCR missed the code, try an exact material-name match in the master.
+        if not code and name:
+            normalized_name = re.sub(r"\s+", " ", name).strip().casefold()
+            for known_code, known_material in database["materials"].items():
+                known_name = re.sub(
+                    r"\s+", " ", clean_text(known_material.get("name"))
+                ).strip().casefold()
+                if normalized_name == known_name:
+                    code = clean_code(known_code)
+                    break
+
         unit = material_unit(database, code)
         if is_mass_unit(unit):
             parts = parse_mass_quantity(raw_qty, mode)
@@ -680,11 +772,12 @@ with tabs[0]:
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
+        column_order=["Material Code", "KG", "GM", "Material Name", "Other Quantity", "Unit", "Quantity Text"],
         column_config={
             "Material Code": st.column_config.TextColumn("Material Code", required=True),
-            "Material Name": st.column_config.TextColumn("Material Name", required=True),
-            "KG": st.column_config.NumberColumn("Quantity (KG)", min_value=0.0, step=0.001, format="%.6f"),
-            "GM": st.column_config.NumberColumn("Quantity (GM)", min_value=0.0, step=0.01, format="%.6f"),
+            "Material Name": st.column_config.TextColumn("Material Name", required=True, width="large"),
+            "KG": st.column_config.NumberColumn("KG", min_value=0.0, step=0.001, format="%.6f", width="small"),
+            "GM": st.column_config.NumberColumn("GM", min_value=0.0, step=0.01, format="%.6f", width="small"),
             "Other Quantity": st.column_config.NumberColumn("Other Quantity", min_value=0.0, step=0.01, format="%.6f"),
             "Unit": st.column_config.TextColumn("Unit"),
             "Quantity Text": st.column_config.TextColumn("Original OCR Text")
