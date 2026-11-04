@@ -1,3 +1,10 @@
+Here is the **complete, updated `bom_tool.py`**. 
+
+I have integrated the new **Smart Parser** directly into the file. This version handles the exact format Google Lens gives you (where every cell is on a new line), fixes OCR typos like `REO40`, and correctly guesses if a number is in Kg or gm.
+
+Replace your entire file with this:
+
+```python
 import streamlit as st
 import pandas as pd
 import os, json, re
@@ -40,10 +47,12 @@ def _local_save(d):
 
 def _gist_config():
     try:
-        gh = st.secrets.get("github", {})
-        tok = gh.get("token", "")
-        gid = gh.get("gist_id", "")
-        if tok and gid:
+        # Force reading only from Streamlit Secrets
+        gh = st.secrets["github"]
+        tok = gh["token"]
+        gid = gh["gist_id"]
+        # Make sure it's a valid classic token
+        if tok and tok.startswith("ghp_") and gid:
             return tok, gid
     except Exception:
         pass
@@ -192,39 +201,71 @@ with tabs[0]:
     raw = st.text_area(
         "1. Paste raw Google Lens text here",
         height=200,
-        placeholder="RA132 IRON (III) HYDROXIDE 100 ---\nRE034 METHYL PARABEN 2 010\nRE039 PROPYL PARABEN --- 225.3",
+        placeholder="Paste the messy text here. The app will clean it up.",
         key="paste_box",
     )
 
     if st.button("⚙️ Auto-Extract Data"):
+        # Split into lines and remove empty ones
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        
+        # Clean up common OCR errors (like REO40 instead of RE040)
+        cleaned_lines = []
+        for line in lines:
+            if line.startswith("REO"):
+                line = "RE0" + line[3:]
+            cleaned_lines.append(line)
+            
         parsed_lines = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        i = 0
+        while i < len(cleaned_lines):
+            line = cleaned_lines[i]
             
-            # Regex: Starts with 2 letters + 3 numbers (e.g., RA132).
-            # Then grabs the name (up to the numbers).
-            # Then grabs the last 1 or 2 numbers (kg and gm).
-            match = re.search(r'^([A-Za-z]{2}\d{3})\s+(.+?)\s+([\d\.]+|--+)\s*([\d\.]+|--+)?$', line)
-            
-            if match:
-                code = match.group(1).strip().upper()
-                name = match.group(2).strip()
-                kg = match.group(3).strip()
-                gm = match.group(4).strip() if match.group(4) else "--"
+            # Check if the line looks like a material code (e.g., RA132, RE040, REDSS)
+            if re.match(r'^R[A-Z]\d{3,4}$', line) or line == "REDSS" or (line.startswith("RE") and len(line) <= 6):
+                code = line
+                name = ""
+                kg = "0"
+                gm = "0"
                 
-                # Clean up the '---'
-                kg_val = "0" if "--" in kg else kg
-                gm_val = "0" if "--" in gm else gm
-                
-                # Format as "X, Y" for the parser
-                qty_str = f"{kg_val}, {gm_val}"
-                
-                parsed_lines.append(f"{code} | {name} | {qty_str}")
+                # 1. Grab the Name (it should be the very next line)
+                if i + 1 < len(cleaned_lines):
+                    name = cleaned_lines[i+1]
+                    i += 2
+                else:
+                    i += 1
+                    continue
+                    
+                # 2. Grab the Numbers (Kg and gm)
+                numbers = []
+                while i < len(cleaned_lines):
+                    nxt = cleaned_lines[i]
+                    # Stop if we hit another code
+                    if re.match(r'^R[A-Z]\d{3,4}$', nxt) or nxt == "REDSS" or (nxt.startswith("RE") and len(nxt) <= 6):
+                        break
+                    # Stop if we hit footer junk
+                    if any(x in nxt.upper() for x in ["PRODUCTION", "STORE KEEPER", "ORIGINAL", "SIGNATURE", "DATE:", "WEIGHT CHECK"]):
+                        break
+                        
+                    # If it's just a number, save it
+                    if re.match(r'^[\d\.]+$', nxt):
+                        numbers.append(nxt)
+                    i += 1
+                    
+                # 3. Assign Kg and gm based on how many numbers we found
+                if len(numbers) == 1:
+                    # If there's a decimal (like 225.3), it's gm. Otherwise it's kg.
+                    if "." in numbers[0]:
+                        gm = numbers[0]
+                    else:
+                        kg = numbers[0]
+                elif len(numbers) >= 2:
+                    kg = numbers[0]
+                    gm = numbers[1]
+                    
+                parsed_lines.append(f"{code} | {name} | {kg}, {gm}")
             else:
-                # If the regex fails, keep the line so they can fix it manually
-                parsed_lines.append(line)
+                i += 1
 
         st.session_state["parsed_text"] = "\n".join(parsed_lines)
         st.success("Data extracted! Review it below before saving.")
@@ -453,3 +494,4 @@ with tabs[5]:
         st.download_button("⬇️ Download Excel", out,
                            f"BOM_{datetime.now():%Y%m%d_%H%M}.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+```
