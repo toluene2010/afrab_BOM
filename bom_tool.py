@@ -73,7 +73,8 @@ def _normalize(d):
     d.setdefault("materials", {})
     d.setdefault("pending", {})
     return d
-    def load_data():
+
+def load_data():
     tok, gid = _gist_config() if REQUESTS_OK else (None, None)
     if tok and gid:
         try:
@@ -117,14 +118,16 @@ def fmt_kg_gm(v):
         s = f"{g:.3f}".rstrip("0").rstrip(".")
         return s if s else "0"
     parts = []
-    if kg: parts.append(f"{kg} kg")
-    if gm > 0 or not kg: parts.append(f"{f(gm)} gm")
+    if kg:
+        parts.append(f"{kg} kg")
+    if gm > 0 or not kg:
+        parts.append(f"{f(gm)} gm")
     return " ".join(parts)
 
 def parse_qty(raw, mode):
     if raw is None:
         return None
-    s = str(raw).lower().replace("kg","").replace("gm","").replace("g","").strip()
+    s = str(raw).lower().replace("kg", "").replace("gm", "").replace("g", "").strip()
     if not s:
         return None
     if mode == "kg_gm" and "," in s:
@@ -140,7 +143,9 @@ def parse_qty(raw, mode):
         return None
 
 data = load_data()
+
 st.title("📋 BOM Digitizer")
+
 if st.session_state.pop("_migrated", False):
     st.success("Migrated local data to GitHub Gist.")
 if "_gist_err" in st.session_state:
@@ -153,6 +158,7 @@ with st.sidebar:
         ["kg + gm (2, 500 = 2.5 kg)", "thousands (2,500 = 2500)"],
     )
     MODE = "kg_gm" if unit_mode.startswith("kg") else "decimal"
+
     st.markdown("---")
     tok, gid = _gist_config() if REQUESTS_OK else (None, None)
     if tok and gid:
@@ -161,19 +167,31 @@ with st.sidebar:
         st.warning("⚠️ Local only — resets on restart")
         st.info("Add [github] block to Streamlit Secrets to enable Gist sync.")
 
-tabs = st.tabs(["📷 Paste", "🧱 Materials", "🛠️ Build", "⏳ Pending", "✏️ Manage", "📥 Export"])
+tabs = st.tabs([
+    "📷 Paste", "🧱 Materials", "🛠️ Build",
+    "⏳ Pending", "✏️ Manage", "📥 Export",
+])
+
 with tabs[0]:
     st.header("Add BOM by pasting text")
-    st.caption("Take photo with Google Lens on phone, copy text, paste below. Each line: CODE | NAME | QTY")
+    st.caption(
+        "Take photo with Google Lens on phone, copy text, paste below. "
+        "Each line: CODE | NAME | QTY"
+    )
 
     c1, c2, c3 = st.columns([2, 1, 1])
-    with c1: pcode = st.text_input("Product Code *", key="pc1")
-    with c2: pname = st.text_input("Product Name *", key="pn1")
-    with c3: bsize = st.number_input("Batch Size", min_value=1, value=1, key="bs1")
+    with c1:
+        pcode = st.text_input("Product Code *", key="pc1")
+    with c2:
+        pname = st.text_input("Product Name *", key="pn1")
+    with c3:
+        bsize = st.number_input("Batch Size", min_value=1, value=1, key="bs1")
 
-    raw = st.text_area("BOM lines", height=260,
-                       placeholder="MAT-001 | Sugar | 2, 500\nMAT-002 | Cocoa | 500",
-                       key="paste_box")
+    raw = st.text_area(
+        "BOM lines", height=260,
+        placeholder="MAT-001 | Sugar | 2, 500\nMAT-002 | Cocoa | 500",
+        key="paste_box",
+    )
 
     if st.button("💾 Save BOM"):
         if not pcode or not pname:
@@ -193,22 +211,28 @@ with tabs[0]:
                     data["pending"][mc] = {"name": mn, "unit": "kg"}
                     new_pending.append(mc)
             data["products"][pcode] = {
-                "name": pname, "batch_size": bsize,
-                "materials": mats, "source": "paste",
+                "name": pname,
+                "batch_size": bsize,
+                "materials": mats,
+                "source": "paste",
             }
             save_data(data)
             st.success(f"Saved {pcode} ({len(mats)} materials)")
             st.rerun()
-            with tabs[1]:
+
+with tabs[1]:
     st.header("🧱 Materials")
     sub1, sub2 = st.tabs(["➕ Add one", "📤 Bulk"])
 
     with sub1:
         with st.form("add_mat", clear_on_submit=True):
             c1, c2, c3 = st.columns([1, 2, 1])
-            with c1: mc = st.text_input("Code *", placeholder="MAT-001")
-            with c2: mn = st.text_input("Name *", placeholder="Sugar")
-            with c3: mu = st.selectbox("Unit", ["kg", "gm", "L", "ml", "pcs"])
+            with c1:
+                mc = st.text_input("Code *", placeholder="MAT-001")
+            with c2:
+                mn = st.text_input("Name *", placeholder="Sugar")
+            with c3:
+                mu = st.selectbox("Unit", ["kg", "gm", "L", "ml", "pcs"])
             if st.form_submit_button("Add"):
                 if mc and mn and mc not in data["materials"]:
                     data["materials"][mc] = {"name": mn, "unit": mu}
@@ -221,12 +245,20 @@ with tabs[0]:
 
     with sub2:
         tpl = pd.DataFrame([{"Code": "MAT-001", "Name": "Sugar", "Unit": "kg"}])
-        st.download_button("⬇️ Template CSV", tpl.to_csv(index=False).encode(),
-                           "materials_template.csv", "text/csv")
+        st.download_button(
+            "⬇️ Template CSV",
+            tpl.to_csv(index=False).encode(),
+            "materials_template.csv",
+            "text/csv",
+        )
         f = st.file_uploader("CSV/Excel", type=["csv", "xlsx"], key="bulk_mat")
         if f:
             try:
-                df = pd.read_csv(f) if f.name.lower().endswith(".csv") else pd.read_excel(f)
+                df = (
+                    pd.read_csv(f)
+                    if f.name.lower().endswith(".csv")
+                    else pd.read_excel(f)
+                )
                 df.columns = [str(c).strip() for c in df.columns]
                 cmap = {c.lower(): c for c in df.columns}
                 if "code" not in cmap or "name" not in cmap:
@@ -236,11 +268,15 @@ with tabs[0]:
                     for _, row in df.iterrows():
                         code = str(row[cmap["code"]]).strip()
                         name = str(row[cmap["name"]]).strip()
-                        unit = (str(row[cmap["unit"]]).strip()
-                                if "unit" in cmap and pd.notna(row[cmap["unit"]])
-                                else "kg")
+                        unit = (
+                            str(row[cmap["unit"]]).strip()
+                            if "unit" in cmap and pd.notna(row[cmap["unit"]])
+                            else "kg"
+                        )
                         if code and name and code not in data["materials"]:
-                            data["materials"][code] = {"name": name, "unit": unit}
+                            data["materials"][code] = {
+                                "name": name, "unit": unit,
+                            }
                             added += 1
                     save_data(data)
                     st.success(f"Imported {added}")
@@ -250,41 +286,62 @@ with tabs[0]:
 
     st.markdown(f"**Registered: {len(data['materials'])}**")
     if data["materials"]:
-        st.dataframe(pd.DataFrame([
-            {"Code": k, "Name": v["name"], "Unit": v["unit"]}
-            for k, v in data["materials"].items()
-        ]), use_container_width=True, hide_index=True)
-        with tabs[2]:
+        st.dataframe(
+            pd.DataFrame([
+                {"Code": k, "Name": v["name"], "Unit": v["unit"]}
+                for k, v in data["materials"].items()
+            ]),
+            use_container_width=True, hide_index=True,
+        )
+
+with tabs[2]:
     st.header("🛠️ Build Product")
     if not data["materials"]:
         st.warning("Add materials first.")
     else:
         c1, c2, c3 = st.columns([2, 1, 1])
-        with c1: bp_code = st.text_input("Product Code *", key="bpc")
-        with c2: bp_name = st.text_input("Product Name *", key="bpn")
-        with c3: bp_batch = st.number_input("Batch Size", 1, value=1, key="bpb")
+        with c1:
+            bp_code = st.text_input("Product Code *", key="bpc")
+        with c2:
+            bp_name = st.text_input("Product Name *", key="bpn")
+        with c3:
+            bp_batch = st.number_input("Batch Size", 1, value=1, key="bpb")
 
         if "draft" not in st.session_state:
             st.session_state.draft = [{"code": None, "kg": 0, "gm": 0.0}]
 
         mcodes = ["—"] + list(data["materials"].keys())
-        labels = {c: f"{c} — {data['materials'][c]['name']}" for c in data["materials"]}
+        labels = {
+            c: f"{c} — {data['materials'][c]['name']}"
+            for c in data["materials"]
+        }
         labels["—"] = "— select —"
 
         for i, row in enumerate(st.session_state.draft):
             c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
             with c1:
-                ch = st.selectbox(f"m{i}", mcodes, format_func=lambda x: labels.get(x, x),
-                                  index=(mcodes.index(row["code"]) if row["code"] in mcodes else 0),
-                                  key=f"s{i}", label_visibility="collapsed")
+                ch = st.selectbox(
+                    f"m{i}", mcodes,
+                    format_func=lambda x: labels.get(x, x),
+                    index=(
+                        mcodes.index(row["code"])
+                        if row["code"] in mcodes else 0
+                    ),
+                    key=f"s{i}",
+                    label_visibility="collapsed",
+                )
                 row["code"] = None if ch == "—" else ch
             with c2:
-                row["kg"] = st.number_input(f"kg{i}", 0, step=1, value=int(row["kg"]),
-                                            key=f"k{i}", label_visibility="collapsed")
+                row["kg"] = st.number_input(
+                    f"kg{i}", 0, step=1, value=int(row["kg"]),
+                    key=f"k{i}", label_visibility="collapsed",
+                )
             with c3:
-                row["gm"] = st.number_input(f"gm{i}", 0.0, 999.999, step=0.1,
-                                            value=float(row["gm"]), key=f"g{i}",
-                                            format="%.3f", label_visibility="collapsed")
+                row["gm"] = st.number_input(
+                    f"gm{i}", 0.0, 999.999, step=0.1,
+                    value=float(row["gm"]), key=f"g{i}",
+                    format="%.3f", label_visibility="collapsed",
+                )
             with c4:
                 if st.button("✖", key=f"x{i}") and len(st.session_state.draft) > 1:
                     st.session_state.draft.pop(i)
@@ -296,12 +353,19 @@ with tabs[0]:
 
         if st.button("💾 Save Product"):
             if bp_code and bp_name and any(r["code"] for r in st.session_state.draft):
-                mats = [{"code": r["code"], "name": data["materials"][r["code"]]["name"],
-                         "qty_kg": kg_gm_to_float(r["kg"], r["gm"])}
-                        for r in st.session_state.draft if r["code"]]
+                mats = [
+                    {
+                        "code": r["code"],
+                        "name": data["materials"][r["code"]]["name"],
+                        "qty_kg": kg_gm_to_float(r["kg"], r["gm"]),
+                    }
+                    for r in st.session_state.draft if r["code"]
+                ]
                 data["products"][bp_code] = {
-                    "name": bp_name, "batch_size": bp_batch,
-                    "materials": mats, "source": "manual",
+                    "name": bp_name,
+                    "batch_size": bp_batch,
+                    "materials": mats,
+                    "source": "manual",
                 }
                 save_data(data)
                 st.session_state.draft = [{"code": None, "kg": 0, "gm": 0.0}]
@@ -309,15 +373,19 @@ with tabs[0]:
                 st.rerun()
             else:
                 st.error("Fill code, name, one material")
-                with tabs[3]:
+
+with tabs[3]:
     st.header("⏳ Pending")
     if not data["pending"]:
         st.success("None pending.")
     else:
-        st.dataframe(pd.DataFrame([
-            {"Code": k, "Name": v["name"], "Unit": v["unit"]}
-            for k, v in data["pending"].items()
-        ]), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame([
+                {"Code": k, "Name": v["name"], "Unit": v["unit"]}
+                for k, v in data["pending"].items()
+            ]),
+            use_container_width=True, hide_index=True,
+        )
         ap = st.selectbox("Approve", ["—"] + list(data["pending"].keys()))
         if ap != "—" and st.button(f"✅ Approve {ap}"):
             if ap not in data["materials"]:
@@ -338,11 +406,20 @@ with tabs[4]:
     if not data["products"]:
         st.info("No products yet.")
     for pc, info in data["products"].items():
-        with st.expander(f"📦 {pc} — {info['name']} (batch {info['batch_size']})"):
-            st.dataframe(pd.DataFrame([
-                {"Code": m["code"], "Name": m["name"], "Qty": fmt_kg_gm(m["qty_kg"])}
-                for m in info["materials"]
-            ]), use_container_width=True, hide_index=True)
+        with st.expander(
+            f"📦 {pc} — {info['name']} (batch {info['batch_size']})"
+        ):
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Code": m["code"],
+                        "Name": m["name"],
+                        "Qty": fmt_kg_gm(m["qty_kg"]),
+                    }
+                    for m in info["materials"]
+                ]),
+                use_container_width=True, hide_index=True,
+            )
             if st.button(f"🗑️ Delete {pc}", key=f"d{pc}"):
                 del data["products"][pc]
                 save_data(data)
@@ -365,7 +442,10 @@ with tabs[5]:
         for mc, mn in sorted(idx.items()):
             row = {"Material Code": mc, "Material Name": mn}
             for pc, info in data["products"].items():
-                q = next((m["qty_kg"] for m in info["materials"] if m["code"] == mc), 0)
+                q = next(
+                    (m["qty_kg"] for m in info["materials"] if m["code"] == mc),
+                    0,
+                )
                 row[f"{pc}\n{info['name']}"] = fmt_kg_gm(q) if q else ""
             rows.append(row)
 
@@ -376,6 +456,9 @@ with tabs[5]:
         with pd.ExcelWriter(out, engine="openpyxl") as w:
             df.to_excel(w, index=False, sheet_name="BOM")
         out.seek(0)
-        st.download_button("⬇️ Download Excel", out,
-                           f"BOM_{datetime.now():%Y%m%d_%H%M}.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "⬇️ Download Excel",
+            out,
+            f"BOM_{datetime.now():%Y%m%d_%H%M}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
