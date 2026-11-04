@@ -739,6 +739,8 @@ with tabs[0]:
         else:
             records = extract_ocr_materials(raw)
             rows = extraction_rows_from_records(records, data, MODE)
+            for row_id, row in enumerate(rows, start=1):
+                row["_row_id"] = row_id
             st.session_state["_extraction_rows"] = rows
             st.session_state["_extraction_revision"] += 1
             if rows:
@@ -752,86 +754,192 @@ with tabs[0]:
 
     st.markdown("### 2. Verify and correct extracted quantities")
     st.info(
-        "KG and GM are independent columns. GM accepts decimal values "
-        "(for example 10.50 or 300.75). You can edit names, codes and figures, "
-        "add missing rows, or delete incorrect rows before saving."
+        "Each material is shown in its own clearly separated row. "
+        "KG and GM are separate fields; GM accepts decimals such as 10.50 "
+        "and 300.75. Use the Delete button on a row to remove it."
     )
+
+    # Give every extracted row a stable ID so its widget values remain
+    # attached to that row when another row is deleted.
+    for row_number, row in enumerate(st.session_state["_extraction_rows"]):
+        if "_row_id" not in row:
+            row["_row_id"] = row_number + 1
+
+    def read_extraction_widget_rows():
+        """Collect the latest visible widget values into plain row records."""
+        collected = []
+        for item in st.session_state["_extraction_rows"]:
+            rid = item["_row_id"]
+            prefix = f"ocr_{st.session_state['_extraction_revision']}_{rid}_"
+            collected.append({
+                "_row_id": rid,
+                "Material Code": st.session_state.get(prefix + "code", item.get("Material Code", "")),
+                "Material Name": st.session_state.get(prefix + "name", item.get("Material Name", "")),
+                "KG": safe_float(st.session_state.get(prefix + "kg", item.get("KG", 0))),
+                "GM": safe_float(st.session_state.get(prefix + "gm", item.get("GM", 0))),
+                "Other Quantity": safe_float(st.session_state.get(prefix + "other", item.get("Other Quantity", 0))),
+                "Unit": st.session_state.get(prefix + "unit", item.get("Unit", "kg")),
+                "Quantity Text": item.get("Quantity Text", "")
+            })
+        return collected
 
     if not st.session_state["_extraction_rows"]:
-        st.session_state["_extraction_rows"] = [{
-            "Material Code": "", "Material Name": "",
-            "KG": 0.0, "GM": 0.0, "Other Quantity": 0.0,
-            "Unit": "kg", "Quantity Text": ""
-        }]
+        st.caption("No extracted material rows yet. Run Auto-Extract Data, or add a row manually.")
+    else:
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                border-color: rgba(128, 128, 128, 0.35);
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
 
-    editor_key = f"extraction_editor_{st.session_state['_extraction_revision']}"
-    extraction_df = pd.DataFrame(st.session_state["_extraction_rows"])
-    edited_df = st.data_editor(
-        extraction_df,
-        key=editor_key,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_order=["Material Code", "KG", "GM", "Material Name", "Other Quantity", "Unit", "Quantity Text"],
-        column_config={
-            "Material Code": st.column_config.TextColumn("Material Code", required=True),
-            "Material Name": st.column_config.TextColumn("Material Name", required=True, width="large"),
-            "KG": st.column_config.NumberColumn("KG", min_value=0.0, step=0.001, format="%.6f", width="small"),
-            "GM": st.column_config.NumberColumn("GM", min_value=0.0, step=0.01, format="%.6f", width="small"),
-            "Other Quantity": st.column_config.NumberColumn("Other Quantity", min_value=0.0, step=0.01, format="%.6f"),
-            "Unit": st.column_config.TextColumn("Unit"),
-            "Quantity Text": st.column_config.TextColumn("Original OCR Text")
-        }
-    )
+    for row_index, row in enumerate(st.session_state["_extraction_rows"], start=1):
+        rid = row["_row_id"]
+        prefix = f"ocr_{st.session_state['_extraction_revision']}_{rid}_"
+        with st.container(border=True):
+            st.markdown(f"**Material row {row_index}**")
+            code_col, name_col = st.columns([1, 2], gap="small")
+            with code_col:
+                st.text_input(
+                    "Material Code",
+                    value=clean_text(row.get("Material Code")),
+                    key=prefix + "code",
+                    placeholder="e.g. MAT001"
+                )
+            with name_col:
+                st.text_input(
+                    "Material Name",
+                    value=clean_text(row.get("Material Name")),
+                    key=prefix + "name",
+                    placeholder="Enter material name"
+                )
 
-    if st.button("➕ Add blank material row", key="add_extraction_row"):
-        new_rows = edited_df.to_dict("records")
-        new_rows.append({
-            "Material Code": "", "Material Name": "",
-            "KG": 0.0, "GM": 0.0, "Other Quantity": 0.0,
-            "Unit": "kg", "Quantity Text": ""
-        })
-        st.session_state["_extraction_rows"] = new_rows
-        st.session_state["_extraction_revision"] += 1
-        st.rerun()
+            kg_col, gm_col, other_col = st.columns([1, 1, 1], gap="small")
+            with kg_col:
+                st.number_input(
+                    "Quantity (KG)",
+                    min_value=0.0,
+                    value=safe_float(row.get("KG")),
+                    step=0.001,
+                    format="%.6f",
+                    key=prefix + "kg"
+                )
+            with gm_col:
+                st.number_input(
+                    "Quantity (GM)",
+                    min_value=0.0,
+                    value=safe_float(row.get("GM")),
+                    step=0.01,
+                    format="%.6f",
+                    key=prefix + "gm"
+                )
+            with other_col:
+                st.number_input(
+                    "Other Qty",
+                    min_value=0.0,
+                    value=safe_float(row.get("Other Quantity")),
+                    step=0.01,
+                    format="%.6f",
+                    key=prefix + "other"
+                )
 
-    if st.button("💾 Save Verified BOM", key="save_pasted_bom"):
+            unit_col, delete_col = st.columns([2, 1], gap="small")
+            with unit_col:
+                st.text_input(
+                    "Unit (for non-mass materials)",
+                    value=clean_text(row.get("Unit")) or "kg",
+                    key=prefix + "unit"
+                )
+            with delete_col:
+                st.write("")
+                if st.button("🗑️ Delete row", key=prefix + "delete", use_container_width=True):
+                    current_rows = read_extraction_widget_rows()
+                    st.session_state["_extraction_rows"] = [
+                        item for item in current_rows if item["_row_id"] != rid
+                    ]
+                    st.session_state["_extraction_revision"] += 1
+                    st.rerun()
+
+            original_text = clean_text(row.get("Quantity Text"))
+            if original_text:
+                st.caption(f"Original OCR quantity: {original_text}")
+
+    add_col, clear_col = st.columns(2)
+    with add_col:
+        if st.button("➕ Add material row", key="add_extraction_row", use_container_width=True):
+            current_rows = read_extraction_widget_rows()
+            next_id = max(
+                [item["_row_id"] for item in current_rows] + [0]
+            ) + 1
+            current_rows.append({
+                "_row_id": next_id,
+                "Material Code": "",
+                "Material Name": "",
+                "KG": 0.0,
+                "GM": 0.0,
+                "Other Quantity": 0.0,
+                "Unit": "kg",
+                "Quantity Text": ""
+            })
+            st.session_state["_extraction_rows"] = current_rows
+            st.session_state["_extraction_revision"] += 1
+            st.rerun()
+
+    with clear_col:
+        if st.button("🧹 Clear all rows", key="clear_extraction_rows", use_container_width=True):
+            st.session_state["_extraction_rows"] = []
+            st.session_state["_extraction_revision"] += 1
+            st.rerun()
+
+    if st.button("💾 Save Verified BOM", key="save_pasted_bom", use_container_width=True):
         product_code = clean_code(pcode)
         product_name = clean_text(pname)
         errors = []
         materials = []
         pending_materials = []
+        edited_rows = read_extraction_widget_rows()
 
         if not product_code or not product_name:
             st.error("Product code and product name are required.")
+        elif not edited_rows:
+            st.error("There are no material rows to save. Extract or add at least one row.")
         else:
-            for index, row in edited_df.iterrows():
+            for index, row in enumerate(edited_rows, start=1):
                 mc = clean_code(row.get("Material Code"))
                 mn = clean_text(row.get("Material Name"))
-                if not mc and not mn:
+                kg = safe_float(row.get("KG"))
+                gm = safe_float(row.get("GM"))
+                other_qty = safe_float(row.get("Other Quantity"))
+
+                # Ignore a completely blank row, but do not silently save
+                # partially completed rows.
+                if not mc and not mn and kg == 0 and gm == 0 and other_qty == 0:
                     continue
                 if not mc or not mn:
-                    errors.append(f"Row {index + 1}: Material code or name is missing.")
+                    errors.append(f"Row {index}: Material code and name are required.")
+                    continue
+                if min(kg, gm, other_qty) < 0:
+                    errors.append(f"Row {index}: Quantities cannot be negative.")
                     continue
 
                 registered_unit = material_unit(data, mc)
                 row_unit = clean_text(row.get("Unit")) or registered_unit
 
                 if is_mass_unit(registered_unit) or is_mass_unit(row_unit):
-                    kg = safe_float(row.get("KG"))
-                    gm = safe_float(row.get("GM"))
-                    if kg < 0 or gm < 0:
-                        errors.append(f"Row {index + 1}: KG and GM cannot be negative.")
-                        continue
                     materials.append(create_bom_entry_parts(mc, mn, kg, gm))
                     selected_unit = "kg"
                 else:
-                    qty = safe_float(row.get("Other Quantity"))
-                    if qty < 0:
-                        errors.append(f"Row {index + 1}: Quantity cannot be negative.")
+                    if kg or gm:
+                        errors.append(
+                            f"Row {index}: {mc} uses {registered_unit}; enter its value in Other Qty."
+                        )
                         continue
+                    materials.append(create_bom_entry(mc, mn, other_qty, registered_unit))
                     selected_unit = registered_unit
-                    materials.append(create_bom_entry(mc, mn, qty, selected_unit))
 
                 if mc not in data["materials"] and mc not in data["pending"]:
                     data["pending"][mc] = {"name": mn, "unit": selected_unit}
