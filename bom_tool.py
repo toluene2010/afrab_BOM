@@ -309,3 +309,73 @@ with tabs[0]:
                 st.rerun()
             else:
                 st.error("Fill code, name, one material")
+                with tabs[3]:
+    st.header("⏳ Pending")
+    if not data["pending"]:
+        st.success("None pending.")
+    else:
+        st.dataframe(pd.DataFrame([
+            {"Code": k, "Name": v["name"], "Unit": v["unit"]}
+            for k, v in data["pending"].items()
+        ]), use_container_width=True, hide_index=True)
+        ap = st.selectbox("Approve", ["—"] + list(data["pending"].keys()))
+        if ap != "—" and st.button(f"✅ Approve {ap}"):
+            if ap not in data["materials"]:
+                data["materials"][ap] = data["pending"][ap]
+            del data["pending"][ap]
+            save_data(data)
+            st.rerun()
+        if st.button("✅ Approve ALL"):
+            for k, v in list(data["pending"].items()):
+                if k not in data["materials"]:
+                    data["materials"][k] = v
+                del data["pending"][k]
+            save_data(data)
+            st.rerun()
+
+with tabs[4]:
+    st.header("Products")
+    if not data["products"]:
+        st.info("No products yet.")
+    for pc, info in data["products"].items():
+        with st.expander(f"📦 {pc} — {info['name']} (batch {info['batch_size']})"):
+            st.dataframe(pd.DataFrame([
+                {"Code": m["code"], "Name": m["name"], "Qty": fmt_kg_gm(m["qty_kg"])}
+                for m in info["materials"]
+            ]), use_container_width=True, hide_index=True)
+            if st.button(f"🗑️ Delete {pc}", key=f"d{pc}"):
+                del data["products"][pc]
+                save_data(data)
+                st.rerun()
+
+with tabs[5]:
+    st.header("Export Excel")
+    if not data["products"]:
+        st.info("No products yet.")
+    else:
+        idx = {}
+        for info in data["products"].values():
+            for m in info["materials"]:
+                idx.setdefault(m["code"], m["name"])
+
+        rows = [{"Material Code": "— BATCH SIZE —", "Material Name": ""}]
+        for pc, info in data["products"].items():
+            rows[0][f"{pc}\n{info['name']}"] = info["batch_size"]
+
+        for mc, mn in sorted(idx.items()):
+            row = {"Material Code": mc, "Material Name": mn}
+            for pc, info in data["products"].items():
+                q = next((m["qty_kg"] for m in info["materials"] if m["code"] == mc), 0)
+                row[f"{pc}\n{info['name']}"] = fmt_kg_gm(q) if q else ""
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True)
+
+        out = BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name="BOM")
+        out.seek(0)
+        st.download_button("⬇️ Download Excel", out,
+                           f"BOM_{datetime.now():%Y%m%d_%H%M}.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
